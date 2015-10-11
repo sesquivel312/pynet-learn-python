@@ -264,43 +264,32 @@ def build_dev_dict(scnd_output_list):
     '''
 
     dev_dict = {}
-    tmp_local_dev = tmp_adj_dev = ''
+    tmp_adj_dev = tmp_local_dev = tmp_adj_intf = ''
 
     for output in scnd_output_list:
         lines = output.split('\n')
         for line in lines:
-            if False: #if '>' in line: # grab the "local" device name
-                pass
-                # tmp_local_dev = line.split('>')[0]
-                # if tmp_local_dev in dev_dict.keys(): # already exists?
-                #     pass
-                # else:
-                #     dev_dict[tmp_local_dev] = {'model': '', 'type': '', 'intfs': [], 'adj_devs': []}
+            if '>' in line:  # get local device name here
+                tmp_local_dev = line.split('>')[0]
+                if tmp_local_dev not in dev_dict.keys():
+                    dev_dict[tmp_local_dev] = {'model': '', 'type': '', 'intfs': [], 'adj_devs': []}
             elif 'Device ID:' in line:  # grab the adj device name
                 tmp_adj_dev = line.split(': ')[1]
-                if tmp_adj_dev in dev_dict.keys():  # previously added this device?
-                    pass
-                else:
+                if tmp_adj_dev not in dev_dict.keys():
                     dev_dict[tmp_adj_dev] = {'model': '', 'type': '', 'intfs': [], 'adj_devs': []}
+                if tmp_adj_dev not in dev_dict[tmp_local_dev]['adj_devs']:
+                    dev_dict[tmp_local_dev]['adj_devs'].append(tmp_adj_dev)
             elif 'Platform:' in line: # get model and type here
                 tmp_list = line.split(',')
                 dev_dict[tmp_adj_dev]['model'] = tmp_list[0].split()[2]
-                if 'Router' in tmp_list[1].split()[1:]:
+                if 'Router' in tmp_list[1].split()[1:]:  # this section should check for existing values
                     dev_dict[tmp_adj_dev]['type'] = 'Router'
                 else:
                     dev_dict[tmp_adj_dev]['type'] = 'Switch'
             elif 'outgoing' in line:  # get two interfaces from this line "local" and "remote"
-                #TODO: add logic to build adj_devs list for the device - include as (localif, adjdev, adjintf)
-                #TODO: consider how to implement as an edge list also or instead
                 tmp_list = line.split(',')
-                tmp_local_intf = tmp_list[0].split(': ')[1]
                 tmp_adj_intf = tmp_list[1].split(': ')[1]
-                if False: #if tmp_local_intf not in dev_dict[tmp_local_dev]['intfs']:
-                    pass
-                    # dev_dict[tmp_local_dev]['intfs'].append(tmp_local_intf)
-                elif tmp_adj_intf not in dev_dict[tmp_adj_dev]['intfs']:
+                if tmp_adj_intf not in dev_dict[tmp_adj_dev]['intfs']:
                     dev_dict[tmp_adj_dev]['intfs'].append(tmp_adj_intf)
-            else:
-                continue
 
     return dev_dict
