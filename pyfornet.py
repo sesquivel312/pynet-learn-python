@@ -269,12 +269,13 @@ def build_dev_dict(scnd_output_list):
     for output in scnd_output_list:
         lines = output.split('\n')
         for line in lines:
-            if '>' in line: # grab the "local" device name
-                tmp_local_dev = line.split('>')[0]
-                if tmp_local_dev in dev_dict.keys(): # already exists?
-                    pass
-                else:
-                    dev_dict[tmp_local_dev] = {'model': '', 'type': '', 'intfs': [], 'adj_devs': []}
+            if False: #if '>' in line: # grab the "local" device name
+                pass
+                # tmp_local_dev = line.split('>')[0]
+                # if tmp_local_dev in dev_dict.keys(): # already exists?
+                #     pass
+                # else:
+                #     dev_dict[tmp_local_dev] = {'model': '', 'type': '', 'intfs': [], 'adj_devs': []}
             elif 'Device ID:' in line:  # grab the adj device name
                 tmp_adj_dev = line.split(': ')[1]
                 if tmp_adj_dev in dev_dict.keys():  # previously added this device?
@@ -294,8 +295,9 @@ def build_dev_dict(scnd_output_list):
                 tmp_list = line.split(',')
                 tmp_local_intf = tmp_list[0].split(': ')[1]
                 tmp_adj_intf = tmp_list[1].split(': ')[1]
-                if tmp_local_intf not in dev_dict[tmp_local_dev]['intfs']:
-                    dev_dict[tmp_local_dev]['intfs'].append(tmp_local_intf)
+                if False: #if tmp_local_intf not in dev_dict[tmp_local_dev]['intfs']:
+                    pass
+                    # dev_dict[tmp_local_dev]['intfs'].append(tmp_local_intf)
                 elif tmp_adj_intf not in dev_dict[tmp_adj_dev]['intfs']:
                     dev_dict[tmp_adj_dev]['intfs'].append(tmp_adj_intf)
             else:
