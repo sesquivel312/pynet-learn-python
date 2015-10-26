@@ -8,6 +8,9 @@
     pfn.<funcname>
 '''
 
+import fileinput
+import re
+
 
 def parse_show_ver_ver(string):  # returns vendor name string or False
     if 'Cisco IOS Software' in string:
@@ -252,44 +255,201 @@ def devices_connected(d1, d2, e_list):
     return connected
 
 
-def build_dev_dict(scnd_output_list):
+def build_dev_dict(scnd_output_file_list):
     '''
-    :param scnd_output_list: this is a list of strings where ea. string is the output of 'show cdp nei detail'
+    :param scnd_output_file_list: this is a list of fully qualified file names.  Using the fileinput module each file
+     will be opened in turn, for each file each line will be interated over.  The files are the output of
+     'show cdp nei detail'
     :return: completed device dictionary
 
     the dictionary returned is hierarchical and is formatted like so:
-    { 'device_name': {'model':<model>,'type': <type>, 'intfs':[<name1>,...,<namen>] }, ...}
+    { 'device_name': {
+            'model':<model>,
+            'type': <type>,
+            'addresses': [<add1>,...,<addn>],
+            'intfs': [<name1>,...,<namen>],
+            'adj_devs': {'<dev1>':[<adjdevname>,<localdevintf>,<adjdevintf>],
+                         '<dev2>':[<adjdevname>,<localdevintf>,<adjdevintf>], ...
+                         }
+                      },
+        ...
+    }
 
     NB: the intfs key has a list for a value
+
+    I believe the 'intfs' list member for a device is redundant, you can construct it from the adj_devs dict, the device
+    is likely to have other interfaces, but since this is all from CDP we'll only know about the interfaces with cdp
+    adjacent devices.  I will keep it though, bc. this could be extended to include data from sources other than CDP
     '''
 
     dev_dict = {}
-    tmp_adj_dev = tmp_local_dev = tmp_adj_intf = ''
+    tmp_adj_dev = tmp_local_dev = tmp_adj_intf = tmp_local_intf = ''
 
-    for output in scnd_output_list:
-        lines = output.split('\n')
-        for line in lines:
-            if '>' in line:  # get local device name here
-                tmp_local_dev = line.split('>')[0]
-                if tmp_local_dev not in dev_dict.keys():
-                    dev_dict[tmp_local_dev] = {'model': '', 'type': '', 'intfs': [], 'adj_devs': []}
-            elif 'Device ID:' in line:  # grab the adj device name
-                tmp_adj_dev = line.split(': ')[1]
-                if tmp_adj_dev not in dev_dict.keys():
-                    dev_dict[tmp_adj_dev] = {'model': '', 'type': '', 'intfs': [], 'adj_devs': []}
-                if tmp_adj_dev not in dev_dict[tmp_local_dev]['adj_devs']:
-                    dev_dict[tmp_local_dev]['adj_devs'].append(tmp_adj_dev)
-            elif 'Platform:' in line: # get model and type here
-                tmp_list = line.split(',')
-                dev_dict[tmp_adj_dev]['model'] = tmp_list[0].split()[2]
-                if 'Router' in tmp_list[1].split()[1:]:  # this section should check for existing values
-                    dev_dict[tmp_adj_dev]['type'] = 'Router'
-                else:
-                    dev_dict[tmp_adj_dev]['type'] = 'Switch'
-            elif 'outgoing' in line:  # get two interfaces from this line "local" and "remote"
-                tmp_list = line.split(',')
-                tmp_adj_intf = tmp_list[1].split(': ')[1]
-                if tmp_adj_intf not in dev_dict[tmp_adj_dev]['intfs']:
-                    dev_dict[tmp_adj_dev]['intfs'].append(tmp_adj_intf)
+    for line in fileinput.input(scnd_output_file_list):
+        if '>' in line:  # get local device name here
+            tmp_local_dev = line.split('>')[0]
+            if tmp_local_dev not in dev_dict.keys():
+                dev_dict[tmp_local_dev] = {'model': '', 'type': '', 'addresses': [], 'intfs': [], 'adj_devs': {}}
+        elif 'Device ID:' in line:  # grab the adj device name
+            tmp_adj_dev = line.split(': ')[1].rstrip('\n')
+            if tmp_adj_dev not in dev_dict.keys():
+                dev_dict[tmp_adj_dev] = {'model': '', 'type': '', 'addresses': [], 'intfs': [], 'adj_devs': {}}
+            if tmp_adj_dev not in dev_dict[tmp_local_dev]['adj_devs'].keys():  # add to adjacent devices dict
+                dev_dict[tmp_local_dev]['adj_devs'][tmp_adj_dev] = []
+        elif 'IP address: ' in line:
+            tmp_adj_dev_add = line.split(': ')[1].rstrip('\n')
+            if tmp_adj_dev_add not in dev_dict[tmp_adj_dev]['addresses']:
+                dev_dict[tmp_adj_dev]['addresses'].append(tmp_adj_dev_add)
+        elif 'Platform:' in line: # get model and type here
+            tmp_list = line.split(',')
+            dev_dict[tmp_adj_dev]['model'] = tmp_list[0].split()[2].rstrip('\n')
+            if 'Router' in tmp_list[1].split()[1:]:  # this section should check for existing values
+                dev_dict[tmp_adj_dev]['type'] = 'Router'
+            else:
+                dev_dict[tmp_adj_dev]['type'] = 'Switch'
+        elif 'outgoing' in line:  # get two interfaces from this line "local" and "remote"
+            tmp_list = line.split(',')
+            tmp_local_intf = tmp_list[0].split(': ')[1].rstrip('\n')
+            tmp_adj_intf = tmp_list[1].split(': ')[1].rstrip('\n')
+
+            if tmp_local_intf not in dev_dict[tmp_local_dev]['intfs']: # add device intf if needed
+                dev_dict[tmp_local_dev]['intfs'].append(tmp_local_intf)
+
+            if tmp_adj_intf not in dev_dict[tmp_adj_dev]['intfs']:  # add dev intf if needed
+                dev_dict[tmp_adj_dev]['intfs'].append(tmp_adj_intf)
+
+            dev_dict[tmp_local_dev]['adj_devs'][tmp_adj_dev].extend([tmp_local_intf, tmp_adj_intf])
 
     return dev_dict
+
+
+def build_dev_dict_re(scnd_output_file_list):
+    '''
+    :param scnd_output_file_list: this is a list of strings where ea. string is the output of 'show cdp nei detail'
+    :return: completed device dictionary
+
+    the dictionary returned is hierarchical and is formatted like so:
+    { 'device_name': {
+            'model':<model>,
+            'type': <type>,
+            'addresses': [<add1>,...,<addn>],
+            'intfs': [<name1>,...,<namen>],
+            'adj_devs': {'<dev1>':[<adjdevname>,<localdevintf>,<adjdevintf>],
+                         '<dev2>':[<adjdevname>,<localdevintf>,<adjdevintf>], ...
+                         }
+                      },
+        ...
+    }
+
+    NB: the intfs key has a list for a value
+
+    I believe the 'intfs' list member for a device is redundant, you can construct it from the adj_devs dict, the device
+    is likely to have other interfaces, but since this is all from CDP we'll only know about the interfaces with cdp
+    adjacent devices.  I will keep it though, bc. this could be extended to include data from sources other than CDP
+
+    This function differs from build_dev_dict in that it uses python regular expressions library rather than simple
+    string methods and takes files as arguments, rather than a list of strings, hence the name build_dev_dict_re_file.
+
+    I implemented using RE for about 85% of the function and then quickly realized it was WAY too much of a pain to
+    use RE's rather than simple string methods.  I updated the "non re" version of this function to take the list of
+    files (rather than a list of lines) and added the 'addresses' key to the dict.
+    '''
+
+    dev_dict = {}
+    re_ip_address = re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}')
+    re_local_dev_name = re.compile(r'([a-zA-Z0-9-]+)>')
+    re_adj_dev_name = re.compile(r'Device ID: ([a-zA-Z0-9-]+)')
+    re_model_type = re.compile(r'Platform: ([\w -]+), +Capabilities: ([\w -]+)')
+
+    for line in fileinput.input(scnd_output_file_list):
+
+        if '>' in line:  # get local device name here & reset temp_x variables << FIX THIS???
+            tmp_adj_dev = tmp_local_dev = tmp_adj_intf = tmp_local_intf = ''
+            tmp_local_dev = re_local_dev_name.search(line).group(1)
+            if tmp_local_dev not in dev_dict.keys():
+                dev_dict[tmp_local_dev] = {'model': '', 'type': '', 'addresses': [], 'intfs': [], 'adj_devs': {}}
+        elif 'Device ID:' in line:  # grab the adj device name
+            tmp_adj_dev = re_adj_dev_name.search(line).group(1)
+            if tmp_adj_dev not in dev_dict.keys():
+                dev_dict[tmp_adj_dev] = {'model': '', 'type': '', 'addresses': [], 'intfs': [], 'adj_devs': {}}
+            if tmp_adj_dev not in dev_dict[tmp_local_dev]['adj_devs'].keys():  # add to adjacent devices dict
+                dev_dict[tmp_local_dev]['adj_devs'][tmp_adj_dev] = []
+        elif 'IP address: ' in line:
+            tmp_adj_dev_add = re_ip_address.search(line).group()
+            if tmp_adj_dev_add not in dev_dict[tmp_adj_dev]['addresses']:
+                dev_dict[tmp_adj_dev]['addresses'].append(tmp_adj_dev_add)
+        elif 'Platform:' in line: # get model and type here
+            # tmp_list = line.split(',')
+            m = re_model_type.search(line)
+            dev_dict[tmp_adj_dev]['model'] =  m.group(1) # tmp_list[0].split()[2]
+            if 'Router' in m.group(2):  # this section should check for existing values
+                dev_dict[tmp_adj_dev]['type'] = 'Router'
+            else:
+                dev_dict[tmp_adj_dev]['type'] = 'Switch'
+        elif 'outgoing' in line:  # get two interfaces from this line "local" and "remote"
+            tmp_list = line.split(',')
+            tmp_local_intf = tmp_list[0].split(': ')[1].rstrip('\n')
+            tmp_adj_intf = tmp_list[1].split(': ')[1].rstrip('\n')
+
+            if tmp_local_intf not in dev_dict[tmp_local_dev]['intfs']: # add device intf if needed
+                dev_dict[tmp_local_dev]['intfs'].append(tmp_local_intf)
+
+            if tmp_adj_intf not in dev_dict[tmp_adj_dev]['intfs']:  # add dev intf if needed
+                dev_dict[tmp_adj_dev]['intfs'].append(tmp_adj_intf)
+
+            dev_dict[tmp_local_dev]['adj_devs'][tmp_adj_dev].extend([tmp_local_intf, tmp_adj_intf])
+
+    return dev_dict
+
+
+def parse_ospf_int_params(sioi_output_list):
+    '''
+
+    :param sioi_output_list: list whose members are the lines of the output of "show ip ospf interface <ifspec>"
+      i.e. it's the output for one specific interface
+    :return: dictionary associating the parameters to the interface name, e.g.
+    {'<ifname1>':{
+        'ip_addr':<ipaddr>,
+        'area':<area_id>,
+        'iftype':<ospf_intf_type>,
+        'cost':<integer_cost>,
+        'timers':(<hello>,<dead>)
+       },
+       ...,
+     '<ifnamen>':{
+        'ip_addr':<ipaddr>,
+        'area':<area_id>,
+        'iftype':<ospf_intf_type>,
+        'cost':<integer_cost>,
+        'timers':(<hello>,<dead>)
+       }
+    }
+    '''
+
+    dict = {}
+    ifspec = ''
+    tmp_data = []
+
+    for line in sioi_output_list:
+        line = line.rstrip('\n')
+        if 'line protocol' in line:
+            ifspec = line.split()[0]
+            dict[ifspec] = {'address': '', 'area_id':-1, 'type': '', 'cost': -1, 'timers': (-1,-1)}
+            if 'Loopback' in ifspec:
+               dict[ifspec]['timers'] = ('NA','NA')
+        if 'Internet Address' in line:
+            tmp_data = line.split(',')
+            dict[ifspec]['address'] = tmp_data[0].split()[2]
+            dict[ifspec]['area_id'] = int(tmp_data[1].split()[1])
+        if 'Process ID' in line:
+            tmp_data = line.split(',')  # extract type
+            dict[ifspec]['type'] = tmp_data[2].split()[2]
+            dict[ifspec]['cost'] = int(tmp_data[3].split(': ')[1])
+        if 'Timer intervals' in line:
+            tmp_data = line.split(',')
+            t_hello = int(tmp_data[1].split()[1])
+            t_dead = int(tmp_data[2].split()[1])
+            dict[ifspec]['timers'] = (t_hello, t_dead)
+
+    return dict
+
